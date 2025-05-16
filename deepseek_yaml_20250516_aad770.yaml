@@ -1,0 +1,87 @@
+trigger:
+- main
+
+variables:
+  python.version: '3.8'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: Setup
+  jobs:
+  - job: Install
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(python.version)'
+      displayName: 'Set up Python'
+
+    - script: |
+        echo "Installing system dependencies..."
+        sudo apt-get update
+        sudo apt-get install -y wget unzip xvfb libxi6 libgconf-2-4
+      displayName: 'Install system packages'
+
+    - script: |
+        echo "Installing Google Chrome..."
+        wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+        sudo apt install ./google-chrome-stable_current_amd64.deb -y
+        google-chrome --version
+      displayName: 'Install Chrome'
+
+    - script: |
+        echo "Installing ChromeDriver..."
+        CHROME_MAJOR=$(google-chrome --version | awk '{print $3}' | cut -d'.' -f1)
+        LATEST=$(wget -qO- https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_MAJOR})
+        wget -q https://chromedriver.storage.googleapis.com/${LATEST}/chromedriver_linux64.zip
+        unzip chromedriver_linux64.zip
+        sudo mv chromedriver /usr/local/bin/
+        sudo chmod +x /usr/local/bin/chromedriver
+        chromedriver --version
+      displayName: 'Install ChromeDriver'
+
+    - script: |
+        echo "Installing Python requirements..."
+        python -m pip install --upgrade pip
+        pip install selenium pytest pytest-xdist
+      displayName: 'Install Python packages'
+
+- stage: Test
+  dependsOn: Setup
+  jobs:
+  - job: Run_Tests
+    steps:
+    - checkout: self
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(python.version)'
+
+    - script: |
+        echo "Starting Xvfb..."
+        Xvfb :99 -screen 0 1920x1080x24 &
+        export DISPLAY=:99
+      displayName: 'Start virtual display'
+
+    - script: |
+        echo "Running tests..."
+        python -m pytest tests/ \
+          --junitxml=test-results.xml \
+          --html=report.html \
+          --self-contained-html \
+          -n 4
+      displayName: 'Run Selenium tests'
+      env:
+        PYTHONPATH: "$(System.DefaultWorkingDirectory)"
+
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFiles: '**/test-results.xml'
+        testRunTitle: 'Selenium Test Results'
+      displayName: 'Publish test results'
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: 'report.html'
+        ArtifactName: 'TestReport'
+      displayName: 'Publish HTML report'
